@@ -1,0 +1,385 @@
+---
+title: "Fantasy_Football"
+author: "Kemon Lardas"
+date: "2/20/2024"
+output: html_document
+---
+
+```{r tidying_dataset}
+library(tidyverse)
+
+getwd() #find working directory
+players <- read_csv("2019projections.csv") #use the read_csv command to import data
+glimpse(players) #check the variables and observations of the fantasy football data
+
+players
+
+players |>
+    distinct(Slot) #tried to find what the Slot variable meant but I could not figure it out
+
+tidy_data <- players |>
+    select(!(...1 | Slot))  #removed the row number and slot variable to focus on the interested data
+
+tidy_data
+```
+
+```{r position_points}
+#which positions scored the most points during the season
+tidy_data |>
+    filter(Pos == "Bench") |>
+    group_by(Week, Team) |>
+    count(Pos) #average of 5 bench spots per team
+
+most_pos_pts_scored <- tidy_data |>
+    group_by(Pos)|>
+    summarize(Total_points = sum(Actual, na.rm = TRUE)) |>
+    mutate(Total_points = if_else(Pos == "Bench", Total_points/5, Total_points),
+           Total_points = if_else(Pos == "Flex" | Pos == "RB" | Pos == "WR", Total_points/2, Total_points)) |>
+    arrange(desc(Total_points))
+
+most_pos_pts_scored
+
+ggplot(most_pos_pts_scored, aes(fct_reorder(Pos, Total_points), Total_points)) +
+    geom_col(aes(fill = Pos)) +
+    labs(
+        x = "Position",
+        y = "Season_Points",
+        title = "Quarterbacks scored the most total points this season"
+    )
+```
+
+
+```{r player_points}
+#top 5 scorers in week 1
+week_one_best <- tidy_data |>
+    filter(Week == 1) |>
+    arrange(desc(Actual)) |>
+    head(5)
+
+#top 5 scorers throughout the season
+season_best <- tidy_data |>
+    group_by(Player)|>
+    summarize(total_szn_points = sum(Actual, na.rm = TRUE))|>
+    arrange(desc(total_szn_points)) |>
+    head(5)
+
+#only Christian McCaffrey and Lamar Jackson were top 5 in week 1 and the entire season
+week_one_best |>
+    inner_join(season_best) 
+```
+
+```{r RBs}
+#visualize the rbs total points for each team in week 1
+team_graph <- tidy_data |>
+    filter(Pos == "RB", Week == 1) |>
+    group_by(Team) |> 
+    summarise(rb_point_total = sum(Actual)) |>
+    ggplot(aes(x = Team, y = rb_point_total)) +
+    geom_col() +
+    scale_x_continuous(breaks = seq(1,13, by = 1))
+
+#visualize the rbs total points in week 1
+player_graph <- tidy_data |>
+    filter(Pos == "RB", Week == 1) |>
+    arrange(desc(Actual)) |>
+    mutate(Team = as.character(Team)) |>
+    ggplot(aes(fct_reorder(Player, Actual), Actual, color = Team, fill = Team)) +
+    geom_col() +
+    coord_flip() +
+    labs(
+        x = "Player",
+        y = "Points Scored",
+        title = "A RB on Team 5 and 13 scored the most points"
+    )
+
+#Team with most points in week 1
+best_week1_team <- tidy_data |>
+    filter(Pos != "Bench" & Week == 1) |>
+    group_by(Team) |>
+    summarize(week_one_points = sum(Actual)) |>
+    arrange(desc(week_one_points)) |>
+    mutate(Team = as.character(Team))
+
+best_week1_team_graph <- 
+    ggplot(best_week1_team, aes(fct_reorder(Team, week_one_points), week_one_points)) +
+    geom_col(aes(fill = Team)) +
+    labs(
+        x = "Team",
+        y = "Week 1 Points",
+        title = "Team 5 and 13 scored the most points" 
+    )
+
+team_graph
+player_graph
+best_week1_team_graph
+#Team 5 and 13 seem to have scored very well b/c of their RBs
+```
+
+```{r Proj_vs_Active}
+#Using ch. 5 notes to see if active players are more likely to have more proj points or questionable players
+
+#Active players are projected more points than questionable players
+tidy_data |>
+    pivot_wider(
+        names_from = Status,
+        values_from = Proj
+    ) |>
+    select(!(OUT:SUSPENSION)) |>
+    summarize(
+        active_proj_points = mean(ACTIVE, na.rm = TRUE),
+        questionable_proj_points = mean(QUESTIONABLE, na.rm = TRUE)
+    )
+
+
+tidy_data |>
+    filter(Status == "SUSPENSION")
+#who even is mark walton?  A rb for the Dolphins that was suspended four games for violating the conduct and substance abuse policy
+```
+
+
+```{r Pos_points_vs_time}
+#Which position averages the most points over all weeks
+tidy_data |>
+    group_by(Pos, Week) |>
+    summarise(
+        average_pos_pts = mean(Actual, na.rm = TRUE)
+    ) |>
+    filter(Pos != "IR") |>
+    ggplot(aes(Week, average_pos_pts, linetype = Pos, color = Pos)) +
+    geom_smooth(se = FALSE) + 
+    labs(
+        y = "Average Points Per Position",
+        title = "Quarterbacks average the most points every week"
+    ) +
+    scale_x_continuous("Week", breaks=seq(0,16,1)) 
+```
+
+
+```{r Active_roster}
+#Which team has the most active roster throughout the szn
+active <- tidy_data |>
+    filter(Status == "ACTIVE") |>
+    group_by(Team) |>
+    summarize(
+        healthiest = length(Status)
+    ) |>
+    arrange(Team)
+
+active
+
+#Who scored the most points throughout the season
+most_pts <- tidy_data |>
+    group_by(Team) |>
+    filter(Pos != "Bench") |>
+    summarize(
+        most_pts_scored = sum(Actual, na.rm = TRUE)
+    ) |>
+    arrange(Team)
+
+most_pts
+
+#Who had the best proportion of players scoring more than projected
+prop_boom <- tidy_data |>
+    mutate(boom = Actual > Proj) |>
+    group_by(Team) |>
+    summarize(
+        prop = mean(boom, na.rm = TRUE)
+    ) |>
+    arrange(Team)
+
+prop_boom
+
+#There is not a strong correlation between points scored and proportion of players scoring more than projected
+prop_boom |>
+    right_join(most_pts) |>
+    ggplot(aes(prop, most_pts_scored)) +
+    geom_point(aes(color = Team)) +
+    geom_smooth(se = FALSE) +
+    labs(
+        x = "Proportion of players scoring more than projected",
+        y = "Points scored by team throughout the season",
+        title = "Correlation of 0.82"
+    )
+
+cor(most_pts$most_pts_scored, active$healthiest) #correlation of -0.23
+cor(most_pts$most_pts_scored, prop_boom$prop) #correlation of 0.82
+
+#much stronger correlation for proportion of players scoring more than projected than a healthy roster
+```
+
+
+```{r splitting_names}
+#Split the First and Last name of each player into two columns
+library("stringr") #load this package for string functions
+
+#This seems to be the most effective way to split up their names since it splits there names up based on the first space
+tidy_data[c("First_Name", "Last_Name")] <- str_split_fixed(tidy_data$Player, " ", 2)
+
+#This was probably the second best option because we were able to extract both the first and last name, but unfortunately if there was an extra suffix like Jr, or II it would leave that out
+tidy_data |>
+    mutate(
+        first_name = str_split(Player, " ", simplify = TRUE)[ ,1],
+        last_name = str_split(Player, " ", simplify = TRUE)[ ,2]
+    )
+
+#This was the least effective method because it automatically separated based on the .'s for abbreviated names ex: T.J. Hockenson had T as first name and J as last name
+tidy_data |>
+    separate(Player, c("First_Name", "Last_Name"), remove = FALSE) |>
+    filter((str_length(First_Name) < 3)) |>
+    filter((str_length(Last_Name) < 3)) 
+
+tidy_data <- tidy_data |>
+    select(!First_Name:Last_Name)
+```
+
+
+```{r best_avg_points}
+#which players averaged the most points with minimum 8 weeks played
+most_avg_pts <- tidy_data |>
+    group_by(Player) |>
+    mutate(
+        n = n(), 
+        avg_pts = mean(Actual, na.rm = TRUE)) |>
+    filter(n >= 8) |>
+    arrange(desc(avg_pts)) |>
+    distinct(Player, .keep_all = TRUE) |>
+    head(n = 10L) 
+
+most_avg_pts$Pos[2] = "QB"
+most_avg_pts$Pos[6] = "QB"
+
+ggplot(most_avg_pts, aes(reorder(Player, avg_pts), avg_pts, color = Pos, fill = Pos)) + 
+    geom_col() + 
+    coord_flip() +
+    labs(
+        title = "QBs commonly average the most points, but a RB is at the top",
+        x = "Player",
+        y = "Average Points (min. 8 games)"
+    )
+```
+
+
+```{r most_team_points}
+#which team scored the most points each week
+total_team_points_per_week <- tidy_data |>
+    filter(Pos != "Bench") |>
+    group_by(Week, Team) |>
+    summarize(
+        total = sum(Actual)
+    )
+
+total_team_points_per_week
+
+total_team_points_per_week |>
+    group_by(Week) |>
+    arrange(desc(total), .by_group = TRUE) |>
+    mutate(
+        best = max(total, na.rm = TRUE)
+    ) |>
+    distinct(best, .keep_all = TRUE) |>
+    ungroup() |>
+    group_by(Team) |>
+    summarize(n = n()) |>
+    arrange(desc(n))
+
+most_pts |>
+    arrange(desc(most_pts_scored))#team 9 had the most points in 4 different weeks (the most out of all teams), and also scored the most points throughout the season
+```
+
+```{r using_functions}
+#use a function in a data frame to find the distribution of points scored amongst all players
+best_player <- function(df, group_var, sum_var) {
+    df |>
+        group_by({{ group_var }}) |>
+        summarize(tot_pts = sum({{ sum_var }}, na.rm = TRUE)) |>
+        arrange(desc(tot_pts))
+}
+
+best_player(tidy_data, Player, Actual) #I idd this earlier but wanted to try this using a function
+
+performances <- function(df, var) {
+    df |>
+        summarize(
+            min = min({{ var }}, na.rm = TRUE),
+            max = max({{ var }}, na.rm = TRUE),
+            median = median({{ var }}, na.rm = TRUE),
+            mean = mean({{ var }}, na.rm = TRUE)
+        )
+}
+
+#Give the min, max, median, and mean
+performances(tidy_data, Actual)
+
+#describe in the psych package
+```
+
+```{r above_average_performance}
+#which team had the most players scoring more than average (not bench)
+
+above_average <- tidy_data |>
+    filter(Pos != "Bench") |>
+    mutate(
+        avg = mean(Actual, na.rm = TRUE),
+        above_avg = Actual > avg,
+        Team = as.character(Team)
+           ) |>
+    group_by(Team) |>
+    summarize(
+        prop = mean(above_avg, na.rm = TRUE)
+    ) |>
+    arrange(desc(prop)) #team 9 had the best proportion of players scoring above average
+
+above_average
+
+ggplot(above_average, aes(fct_reorder(Team, prop), prop)) +
+    geom_col() +
+    labs(
+        x = "Team",
+        y = "Proportion of players scoring above average",
+        title = "Team 9 had the best proportion of players scoring above average"
+    )
+```
+
+
+```{r injury}
+#How did players do coming off injury
+
+injured <- tidy_data |>
+    filter(Pos == "IR", Actual == 0.00) |>
+    distinct(Player, .keep_all = TRUE) |>
+    ungroup()
+injured #returns all players that were listed on IR
+
+injured_avg_pts <- tidy_data |>
+    filter(Player %in% injured$Player) |>
+    group_by(Player) |>
+    summarize(
+        injured_avg_actual = mean(Actual, na.rm = TRUE)
+    )
+
+injured_avg_pts #injured players average points throughout the season
+    
+
+injured2 <- tidy_data |>
+    filter(Player %in% injured$Player) |>
+    group_by(Player) |>
+    arrange(Player) |>
+    na.omit() |>
+    mutate(
+        difference = Actual - lag(Actual),
+        comeback = if_else(Actual == difference, TRUE, FALSE)
+    ) |>
+    filter(Actual != 0, comeback == TRUE) |>
+    ungroup()
+
+injured2 #returns the points scored the week a player came back from injury
+
+injured2 |>
+    left_join(injured_avg_pts, by = "Player") |>
+    select(Player, Pos, Actual, injured_avg_actual) |>
+    mutate(
+        good_return = Actual > injured_avg_actual
+    ) 
+#returns whether a player scored above there average points for the season when the week they came back
+
+```
